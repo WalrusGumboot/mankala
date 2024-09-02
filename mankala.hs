@@ -1,11 +1,15 @@
 import Control.Monad (when)
 import Data.Char (digitToInt)
 import Data.Maybe (fromJust, isJust)
-import System.Exit (exitSuccess)
+import System.Exit (exitFailure, exitSuccess)
 import System.IO (BufferMode (NoBuffering), hFlush, hSetBuffering, stdin)
 import Text.Printf (printf)
 
 boardLength :: Int = 6
+
+initialPoints :: Int = 4
+
+clearScreen :: String = "\ESC[2J\ESC[H"
 
 data TurnIndicator = A | B deriving (Enum, Eq, Show)
 
@@ -21,6 +25,13 @@ data BoardState = BoardState
     turn :: TurnIndicator
   }
   deriving (Eq, Show)
+
+data MoveResult = ValidMove BoardState | InvalidMove
+
+unwrap :: MoveResult -> BoardState
+unwrap result = case result of
+  ValidMove a -> a
+  _ -> error "called unwrap on an invalid MoveResult"
 
 swapTurn :: BoardState -> BoardState
 swapTurn board = board {turn = otherTurn $ turn board}
@@ -48,15 +59,15 @@ printBoard board =
   let s =
         printf
           ( unlines
-              [ "\ESC[2J\ESC[H",
-                "         pts.     6   5   4   3   2   1  ",
-                "       ┌─────┐  ┌───┬───┬───┬───┬───┬───┐",
-                "%sB%s  │ %3d │  │%3d│%3d│%3d│%3d│%3d│%3d│",
-                "       └─────┘  └───┴───┴───┴───┴───┴───┘",
-                "       ┌───┬───┬───┬───┬───┬───┐  ┌─────┐",
-                "%sA%s  │%3d│%3d│%3d│%3d│%3d│%3d│  │ %3d │",
-                "       └───┴───┴───┴───┴───┴───┘  └─────┘",
-                "         1   2   3   4   5   6      pts. "
+              [ clearScreen,
+                "         pts.     6   5   4   3   2   1           ",
+                "       ┌─────┐  ┌───┬───┬───┬───┬───┬───┐         ",
+                "%sB%s  │ %3d │  │%3d│%3d│%3d│%3d│%3d│%3d│         ",
+                "       └─────┘  └───┴───┴───┴───┴───┴───┘         ",
+                "                ┌───┬───┬───┬───┬───┬───┐  ┌─────┐",
+                "%sA%s           │%3d│%3d│%3d│%3d│%3d│%3d│  │ %3d │",
+                "                └───┴───┴───┴───┴───┴───┘  └─────┘",
+                "                  1   2   3   4   5   6      pts. "
               ]
           )
           (if turn board == B then "[[" else "  ")
@@ -78,6 +89,22 @@ printBoard board =
           (aTiles board !! 5)
           (aPoints board)
    in putStrLn s
+
+data WinResult = Winner TurnIndicator | Tie
+
+checkForWinCondition :: BoardState -> Maybe WinResult
+checkForWinCondition board
+  | aPoints board > initialPoints * boardLength = Just $ Winner A
+  | bPoints board > initialPoints * boardLength = Just $ Winner B
+  | aTiles board == replicate boardLength 0 = case compare (bPoints board + sum (bTiles board)) (aPoints board) of
+      GT -> Just $ Winner B
+      LT -> Just $ Winner A
+      EQ -> Just Tie
+  | bTiles board == replicate boardLength 0 = case compare (aPoints board + sum (aTiles board)) (bPoints board) of
+      GT -> Just $ Winner A
+      LT -> Just $ Winner B
+      EQ -> Just Tie
+  | otherwise = Nothing
 
 newGame :: BoardState =
   BoardState
@@ -138,20 +165,38 @@ moveRemaining remaining idx alreadyDropped board
   | idx == boardLength && not alreadyDropped = moveRemaining (remaining - 1) idx True (addPointsForActive 1 board)
   | otherwise = moveRemaining (remaining - 1) ((idx + 1) `mod` (2 * boardLength)) alreadyDropped (update idx (+ 1) board)
 
-move :: Int -> BoardState -> Maybe BoardState
-move idx board = if get idx board == 0 then Nothing else Just $ moveRemaining (get idx board) (idx + 1) False (update idx (const 0) board)
+move :: Int -> BoardState -> MoveResult
+move idx board =
+  if get idx board == 0
+    then InvalidMove
+    else
+      let newState = moveRemaining (get idx board) (idx + 1) False (update idx (const 0) board)
+          winner = checkForWinCondition
+       in ValidMove newState
+
+moveAssertCorrect :: Int -> BoardState -> BoardState
+moveAssertCorrect idx board = unwrap $ move idx board
+
+displayEndGame :: WinResult -> IO ()
+displayEndGame result = do
+  printf
+    (clearScreen ++ "%s\n")
+    ( case result of
+        Winner turn -> "player " ++ if turn == A then "A" else "B" ++ "wins!"
+        Tie -> "both players tied."
+    )
 
 displayAndQuery :: [Int] -> IO ()
 displayAndQuery moveStack =
-  let mostRecentState = foldr (\newMove currentState -> fromJust $ move newMove currentState) newGame moveStack
+  let mostRecentState = foldr moveAssertCorrect newGame moveStack
    in do
         printBoard mostRecentState
         moveChar <- getChar
         when (moveChar == 'q') exitSuccess
         let idx = digitToInt moveChar - 1
-        if isJust $ move idx mostRecentState
-          then displayAndQuery (idx : moveStack)
-          else displayAndQuery moveStack
+        case move idx mostRecentState of
+          ValidMove a -> let wc = checkForWinCondition a in maybe (displayAndQuery (idx : moveStack)) displayEndGame wc
+          InvalidMove -> displayAndQuery moveStack
 
 main :: IO ()
 main = do
