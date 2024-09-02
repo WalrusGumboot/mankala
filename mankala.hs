@@ -1,4 +1,7 @@
+import Control.Monad (when)
 import Data.Char (digitToInt)
+import Data.Maybe (fromJust, isJust)
+import System.Exit (exitSuccess)
 import System.IO (BufferMode (NoBuffering), hFlush, hSetBuffering, stdin)
 import Text.Printf (printf)
 
@@ -46,18 +49,18 @@ printBoard board =
         printf
           ( unlines
               [ "\ESC[2J\ESC[H",
-                "          pts.     6   5   4   3   2   1           ",
-                "        ┌─────┐  ┌───┬───┬───┬───┬───┬───┐         ",
-                " %sB%s  │ %3d │  │%3d│%3d│%3d│%3d│%3d│%3d│         ",
-                "        └─────┘  └───┴───┴───┴───┴───┴───┘         ",
-                "                 ┌───┬───┬───┬───┬───┬───┐  ┌─────┐",
-                " %sA%s           │%3d│%3d│%3d│%3d│%3d│%3d│  │ %3d │",
-                "                 └───┴───┴───┴───┴───┴───┘  └─────┘",
-                "                   1   2   3   4   5   6      pts. "
+                "         pts.     6   5   4   3   2   1  ",
+                "       ┌─────┐  ┌───┬───┬───┬───┬───┬───┐",
+                "%sB%s  │ %3d │  │%3d│%3d│%3d│%3d│%3d│%3d│",
+                "       └─────┘  └───┴───┴───┴───┴───┴───┘",
+                "       ┌───┬───┬───┬───┬───┬───┐  ┌─────┐",
+                "%sA%s  │%3d│%3d│%3d│%3d│%3d│%3d│  │ %3d │",
+                "       └───┴───┴───┴───┴───┴───┘  └─────┘",
+                "         1   2   3   4   5   6      pts. "
               ]
           )
-          (if turn board == B then "[ " else "  ")
-          (if turn board == B then " ]" else "  ")
+          (if turn board == B then "[[" else "  ")
+          (if turn board == B then "]]" else "  ")
           (bPoints board)
           (bTiles board !! 5)
           (bTiles board !! 4)
@@ -65,8 +68,8 @@ printBoard board =
           (bTiles board !! 2)
           (bTiles board !! 1)
           (head $ bTiles board)
-          (if turn board == A then "[ " else "  ")
-          (if turn board == A then " ]" else "  ")
+          (if turn board == A then "[[" else "  ")
+          (if turn board == A then "]]" else "  ")
           (head $ aTiles board)
           (aTiles board !! 1)
           (aTiles board !! 2)
@@ -135,17 +138,20 @@ moveRemaining remaining idx alreadyDropped board
   | idx == boardLength && not alreadyDropped = moveRemaining (remaining - 1) idx True (addPointsForActive 1 board)
   | otherwise = moveRemaining (remaining - 1) ((idx + 1) `mod` (2 * boardLength)) alreadyDropped (update idx (+ 1) board)
 
-move :: Int -> BoardState -> BoardState
-move idx board = moveRemaining (get idx board) (idx + 1) False (update idx (const 0) board)
+move :: Int -> BoardState -> Maybe BoardState
+move idx board = if get idx board == 0 then Nothing else Just $ moveRemaining (get idx board) (idx + 1) False (update idx (const 0) board)
 
 displayAndQuery :: [Int] -> IO ()
 displayAndQuery moveStack =
-  let mostRecentState = foldr move newGame moveStack
+  let mostRecentState = foldr (\newMove currentState -> fromJust $ move newMove currentState) newGame moveStack
    in do
         printBoard mostRecentState
         moveChar <- getChar
+        when (moveChar == 'q') exitSuccess
         let idx = digitToInt moveChar - 1
-        displayAndQuery (idx : moveStack)
+        if isJust $ move idx mostRecentState
+          then displayAndQuery (idx : moveStack)
+          else displayAndQuery moveStack
 
 main :: IO ()
 main = do
